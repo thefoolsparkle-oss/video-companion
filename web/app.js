@@ -253,54 +253,98 @@ const App = (() => {
   }
 
   // ========== 麦克风验收 ==========
+  function updateMicDebug(state, level, ctxState, trackState) {
+    const el = $('#mic-debug');
+    if (!el) return;
+    el.style.display = 'block';
+    el.textContent = `Mic: ${state} | Level: ${level} | Ctx: ${ctxState} | Track: ${trackState}`;
+  }
+
   async function toggleMic() {
     if (micActive) { stopMic(); return; }
+    updateMicDebug('starting', '0.00', '--', '--');
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
-      });
+      micStream = await getUserMediaWithFallback();
+      const track = micStream.getAudioTracks()[0];
+      updateMicDebug('live', '0.00', '--', track ? track.readyState : '?');
       micActive = true;
       micSegments = 0;
       setDot('dot-mic', true);
       $('#btn-mic-toggle').textContent = '关闭';
       $('#mic-error').style.display = 'none';
-      startMicMeter(micStream);
+      await startMicMeter(micStream);
       startMicCapture(micStream);
     } catch (e) {
       micActive = false;
       setDot('dot-mic', false);
+      $('#btn-mic-toggle').textContent = '开启';
       showMicError('麦克风不可用: ' + (e.name || e.message));
+      addMsg('system', '麦克风启动失败: ' + (e.name || '') + ' ' + (e.message || ''));
+      updateMicDebug('error', '0.00', '--', '--');
+      console.error('toggleMic error:', e);
+    }
+  }
+
+  async function getUserMediaWithFallback() {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+    } catch (e) {
+      console.warn('getUserMedia with constraints failed, falling back: ' + e.message);
+      return await navigator.mediaDevices.getUserMedia({ audio: true });
     }
   }
 
   function stopMic() {
     micActive = false;
     if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-    if (micCtx) { micCtx.close().catch(()=>{}); micCtx = null; }
+    if (micCtx) {
+      try { micCtx.close(); } catch(e) {}
+      micCtx = null;
+    }
     setDot('dot-mic', false);
     $('#btn-mic-toggle').textContent = '开启';
     $('#mic-meter').style.width = '0%';
+    $('#mic-error').style.display = 'none';
+    updateMicDebug('off', '0.00', 'closed', 'ended');
+    const dbg = $('#mic-debug');
+    if (dbg) dbg.style.display = 'none';
   }
 
-  function startMicMeter(stream) {
-    try {
-      micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-      const src = micCtx.createMediaStreamSource(stream);
-      const analyser = micCtx.createAnalyser();
-      analyser.fftSize = 256;
-      src.connect(analyser);
-      const buf = new Uint8Array(analyser.frequencyBinCount);
+  async function startMicMeter(stream) {
+    micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    console.debug('AudioContext created, state:', micCtx.state);
+    if (micCtx.state === 'suspended') {
+      await micCtx.resume();
+      console.debug('AudioContext resumed, state:', micCtx.state);
+    }
+    const src = micCtx.createMediaStreamSource(stream);
+    const analyser = micCtx.createAnalyser();
+    analyser.fftSize = 256;
+    src.connect(analyser);
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+    let tickCount = 0;
 
-      function tick() {
-        if (!micActive || !micCtx) return;
-        analyser.getByteFrequencyData(buf);
-        const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
-        const pct = Math.min(100, Math.round(avg * 2));
-        $('#mic-meter').style.width = pct + '%';
-        requestAnimationFrame(tick);
+    function tick() {
+      if (!micActive || !micCtx) {
+        $('#mic-meter').style.width = '0%';
+        return;
       }
-      tick();
-    } catch(e) {}
+      analyser.getByteFrequencyData(buf);
+      const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+      const pct = Math.min(100, Math.round(avg * 2));
+      $('#mic-meter').style.width = pct + '%';
+
+      tickCount++;
+      if (tickCount % 60 === 1) {
+        const track = micStream ? micStream.getAudioTracks()[0] : null;
+        console.debug('mic tick #' + tickCount + ' avg=' + avg.toFixed(2) + ' pct=' + pct + ' ctx=' + micCtx.state + ' track=' + (track ? track.readyState + (track.muted ? '/muted' : '/unmuted') : 'null'));
+        updateMicDebug('live', avg.toFixed(2), micCtx.state, track ? track.readyState + (track.muted ? ' muted' : '') : '?');
+      }
+      requestAnimationFrame(tick);
+    }
+    tick();
   }
 
   function startMicCapture(stream) {
