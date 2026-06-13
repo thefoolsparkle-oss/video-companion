@@ -221,3 +221,42 @@ def test_pause_resume():
 
     session.resume()
     assert session.is_active() == True
+
+
+def test_max_reply_chars_limit():
+    """测试14: persona.max_reply_chars 限制回复长度"""
+    import asyncio
+    persona = PersonaContext(persona_name="Mio", display_name="澪", max_reply_chars=5)
+    engine = LocalVTuberEngine(persona)
+    # 身份问题回复较长，应该被截断到 ≤5 字符
+    resp = asyncio.run(engine.generate_response("你是谁", "", ""))
+    assert len(resp) <= 5
+
+
+def test_display_name_change():
+    """测试15: 修改 display_name 后身份回复使用新名字"""
+    persona = PersonaContext(persona_name="TestBot", display_name="小测试")
+    engine = LocalVTuberEngine(persona)
+    resp = asyncio.run(engine.generate_response("你是谁", "", ""))
+    assert "小测试" in resp
+
+
+def test_persona_config_injection():
+    """测试16: persona_config 注入 MediaSession 生效"""
+    persona_config = {
+        "name": "CustomBot",
+        "display_name": "自定义",
+        "max_reply_chars": 50,
+        "allow_visual_comment": False,
+        "avoid_fake_memory": True,
+    }
+    session = MediaSession(persona_id="test", persona_config=persona_config)
+    assert session.persona.persona_name == "CustomBot"
+    assert session.persona.display_name == "自定义"
+    assert session.persona.max_reply_chars == 50
+    assert session.persona.allow_visual_comment == False
+    assert session.persona.avoid_fake_memory == True
+
+    # 未传入的字段使用默认值
+    assert session.persona.language == "zh"
+    assert session.persona.speaking_style == "自然、简短、温和、稍微冷静"

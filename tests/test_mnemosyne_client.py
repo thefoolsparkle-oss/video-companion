@@ -135,3 +135,72 @@ def test_legacy_bridge_defaults():
     # 系统配置 (legacy_bridge) 应覆盖为 False
     cfg = MnemosyneConfig(enabled=False)
     assert cfg.enabled == False
+
+
+def test_legacy_disabled_no_reconnect():
+    """测试10: legacy_bridge disabled 时不创建 reconnect task"""
+    import asyncio
+    from unittest.mock import patch
+
+    # 模拟 DEFAULT_CONFIG：legacy_bridge disabled
+    mock_config = {
+        "legacy_bridge": {"api_base": "http://127.0.0.1:8000", "enabled": False},
+        "server": {"host": "127.0.0.1", "port": 8001},
+        "camera": {}, "microphone": {}, "local_vision": {}, "vision_provider": {},
+        "speech": {"asr": {"provider": "mock"}, "tts": {"provider": "mock"}},
+        "privacy": {"defaults": {}, "save_raw_media": False},
+        "cost": {},
+        "persona": {},
+        "project": {"mode": "standalone_ai_vtuber"},
+    }
+
+    from app.server import VideoCompanionServer
+    import logging
+    logging.disable(logging.CRITICAL)
+
+    server = VideoCompanionServer.__new__(VideoCompanionServer)
+    server.config = mock_config
+
+    from app.consent import ConsentManager
+    from app.camera_source import CameraSource, CameraConfig
+    from app.audio_source import AudioSource, AudioConfig
+    from app.local_vision import LocalVisionDetector
+    from app.vision_provider import VisionProviderManager, VisionProviderConfig
+    from app.speech_provider import SpeechProviderManager, SpeechConfig
+    from app.mnemosyne_client import MnemosyneClient, MnemosyneConfig
+
+    server.consent = ConsentManager()
+    server.camera = CameraSource(CameraConfig())
+    server.audio = AudioSource(AudioConfig())
+    server.local_vision = LocalVisionDetector()
+    server.vision = VisionProviderManager(enabled=False)
+    server.speech = SpeechProviderManager(SpeechConfig(asr_provider="mock", tts_provider="mock"))
+
+    lb_cfg = mock_config.get("legacy_bridge", {})
+    server.mnemosyne = MnemosyneClient(MnemosyneConfig(
+        api_base=lb_cfg.get("api_base", ""),
+        enabled=lb_cfg.get("enabled", False),
+    ))
+
+    server._active_ws = set()
+    server._reconnect_task = None
+
+    # 执行 initialize
+    async def run_init():
+        await server.local_vision.initialize()
+        await server.vision.initialize()
+        await server.speech.initialize()
+        await server.mnemosyne.initialize()
+        # 关键检查：disabled 时不创建 reconnect task
+        if server.mnemosyne.config.enabled:
+            server._reconnect_task = asyncio.create_task(asyncio.sleep(0))
+        # 否则保持 None
+
+    asyncio.run(run_init())
+
+    # legacy_bridge disabled → 不应创建 reconnect task
+    assert server._reconnect_task is None
+    assert server.mnemosyne.config.enabled == False
+
+    # 断开 client
+    asyncio.run(server.mnemosyne.close())

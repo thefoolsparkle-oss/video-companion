@@ -297,7 +297,7 @@ class LocalVTuberEngine:
 class MediaSession:
     """媒体会话管理器"""
 
-    def __init__(self, persona_id: str = ""):
+    def __init__(self, persona_id: str = "", persona_config: Optional[dict] = None):
         self.persona_id = persona_id
         self.state = SessionState.IDLE
         self.stats = SessionStats()
@@ -306,7 +306,7 @@ class MediaSession:
         self._state_listeners: list = []
         self._error_count: int = 0
 
-        self.persona = PersonaContext(persona_id=persona_id)
+        self.persona = self._build_persona(persona_id, persona_config)
         self.dialogue_engine = LocalVTuberEngine(self.persona)
 
         self.camera_source = None
@@ -321,6 +321,20 @@ class MediaSession:
         self._latest_observation: Optional[Dict[str, Any]] = None
         self._conversation_history: List[str] = []
 
+    def _build_persona(self, persona_id: str, persona_config: Optional[dict]) -> PersonaContext:
+        """从 config 构建 PersonaContext，config 值覆盖默认值"""
+        pc = persona_config or {}
+        return PersonaContext(
+            persona_id=persona_id,
+            persona_name=pc.get("name", "Mio"),
+            display_name=pc.get("display_name", "澪"),
+            language=pc.get("language", "zh"),
+            speaking_style=pc.get("style", "自然、简短、温和、稍微冷静"),
+            max_reply_chars=int(pc.get("max_reply_chars", 100)),
+            allow_visual_comment=bool(pc.get("allow_visual_comment", True)),
+            avoid_fake_memory=bool(pc.get("avoid_fake_memory", True)),
+        )
+
     async def start(self):
         logger.info("Starting media session for persona=%s", self.persona_id)
         self.state = SessionState.CONNECTING
@@ -330,17 +344,21 @@ class MediaSession:
         self._conversation_history.clear()
         self._error_count = 0
 
-        if self.mnemosyne_client:
+        if self.mnemosyne_client and self.mnemosyne_client.is_connected():
             try:
                 ctx = await self.mnemosyne_client.get_session_context(self.persona_id)
                 if ctx:
                     self.persona = PersonaContext(
-                        persona_id=ctx.persona_id,
-                        persona_name=ctx.persona_name or "Assistant",
-                        speaking_style=ctx.speaking_style or "casual",
-                        relationship=ctx.relationship_status or "friend",
+                        persona_id=ctx.persona_id or self.persona.persona_id,
+                        persona_name=ctx.persona_name or self.persona.persona_name,
+                        display_name=self.persona.display_name,
+                        speaking_style=ctx.speaking_style or self.persona.speaking_style,
+                        relationship=ctx.relationship_status or self.persona.relationship,
                         recent_summary=ctx.recent_summary or "",
                         boundaries=ctx.boundaries or [],
+                        max_reply_chars=self.persona.max_reply_chars,
+                        allow_visual_comment=self.persona.allow_visual_comment,
+                        avoid_fake_memory=self.persona.avoid_fake_memory,
                     )
                     self.dialogue_engine.set_persona(self.persona)
             except Exception as e:

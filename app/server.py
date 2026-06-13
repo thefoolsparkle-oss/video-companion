@@ -168,8 +168,10 @@ class VideoCompanionServer:
         await self.vision.initialize()
         await self.speech.initialize()
         await self.mnemosyne.initialize()
-        # 启动 legacy bridge 重连轮询（默认关闭，轮询也无效）
-        self._reconnect_task = asyncio.create_task(self._mnemosyne_reconnect_loop())
+        # 仅在 legacy bridge 启用时启动重连轮询
+        if self.mnemosyne.config.enabled:
+            self._reconnect_task = asyncio.create_task(self._mnemosyne_reconnect_loop())
+            logger.info("Legacy bridge reconnect loop started")
         logger.info("All modules initialized")
         logger.info("=" * 50)
 
@@ -187,7 +189,8 @@ class VideoCompanionServer:
         if self.media_session and self.media_session.is_active():
             await self.media_session.stop()
 
-        self.media_session = MediaSession(persona_id=persona_id)
+        persona_config = self.config.get("persona", {})
+        self.media_session = MediaSession(persona_id=persona_id, persona_config=persona_config)
         self.media_session.camera_source = self.camera
         self.media_session.audio_source = self.audio
         self.media_session.local_vision = self.local_vision
