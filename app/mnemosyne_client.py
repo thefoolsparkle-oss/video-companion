@@ -109,7 +109,10 @@ class VideoTurnResponse:
             reply_text=data.get("reply_text", ""),
             voice_style=data.get("voice_style", "natural"),
             expression=data.get("expression", "neutral"),
-            memory_policy=data.get("memory_policy", {}),
+            memory_policy=data.get("memory_policy") or {
+                "should_extract": False,
+                "candidate_only": True,
+            },
         )
 
 

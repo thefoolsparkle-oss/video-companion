@@ -34,12 +34,22 @@ def test_video_turn_response_fields():
 
 
 def test_video_turn_response_defaults():
-    """主项目缺失字段时使用安全默认值"""
+    """主项目缺失字段时使用安全默认值 — memory_policy 不能是空 dict"""
     resp = VideoTurnResponse.from_api_response({})
     assert resp.reply_text == ""
     assert resp.voice_style == "natural"
     assert resp.expression == "neutral"
-    assert resp.memory_policy == {}
+    assert resp.memory_policy == {"should_extract": False, "candidate_only": True}
+
+    # 即使主项目返回空的 memory_policy，也要回退到安全默认
+    resp2 = VideoTurnResponse.from_api_response({"memory_policy": {}})
+    assert resp2.memory_policy == {"should_extract": False, "candidate_only": True}
+
+    # 主项目明确指定时使用指定值
+    resp3 = VideoTurnResponse.from_api_response({
+        "memory_policy": {"should_extract": True, "candidate_only": False}
+    })
+    assert resp3.memory_policy == {"should_extract": True, "candidate_only": False}
 
 
 def test_video_turn_response_empty_reply():
