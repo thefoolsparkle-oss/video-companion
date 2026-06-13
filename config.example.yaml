@@ -1,0 +1,88 @@
+# Video Companion 配置
+# 复制为 config.yaml 后填入 API Key
+
+server:
+  host: "127.0.0.1"
+  port: 8001
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:5173"
+
+camera:
+  default_width: 640
+  default_height: 480
+  default_fps: 15
+  capture_interval_sec: 2.0
+  default_on: false
+
+microphone:
+  sample_rate: 16000
+  chunk_size: 1024
+  default_on: false
+  vad_enabled: true
+  vad_silence_threshold_ms: 800
+  vad_speech_threshold_ms: 200
+
+# 本地视觉检测 (OpenCV)
+local_vision:
+  detection_interval_sec: 1.0
+  enabled_detectors:
+    - face
+    - motion
+  face_confidence: 0.5
+  motion_sensitivity: 0.3
+
+# 外部视觉模型 — 默认 OpenAI GPT-4o
+vision_provider:
+  default_on: false
+  provider: openai          # openai | anthropic
+  model: gpt-4o
+  max_frames_per_minute: 6
+  max_cost_per_hour: 0.5
+  max_cost_per_day: 2.0
+  max_resolution: 1024
+  fallback_on_limit: skip
+  api_key_env: "OPENAI_API_KEY"
+  api_base: "https://api.openai.com/v1"
+
+# 语音 — 默认 OpenAI Whisper + OpenAI TTS
+speech:
+  asr:
+    provider: openai_whisper
+    model: whisper-1
+    language: zh
+  tts:
+    provider: openai_tts      # openai_tts | elevenlabs
+    model: tts-1
+    voice: alloy
+    speed: 1.0
+    streaming: true
+    interruptible: true
+  api_key_env: "OPENAI_API_KEY"
+  elevenlabs_api_key_env: "ELEVENLABS_API_KEY"
+
+# 主项目 Mnemosyne 桥接
+mnemosyne:
+  enabled: true
+  api_base: "http://127.0.0.1:8000"
+  api_key_env: "MNEMOSYNE_API_KEY"
+  timeout: 10
+  retries: 2
+
+# 隐私
+privacy:
+  defaults:
+    camera: false
+    microphone: false
+    external_vision: false
+    save_summary: false
+    save_observation: false
+  save_raw_media: false
+  log_redact_pii: true
+
+# 成本
+cost:
+  max_frames_per_minute: 6
+  max_cost_per_hour: 0.5
+  max_cost_per_day: 2.0
+  on_limit: skip
