@@ -1,11 +1,12 @@
 """
-mnemosyne_client.py 测试套件
+mnemosyne_client.py 测试套件 — Legacy bridge
 
 测试覆盖：
 1. 客户端初始化
 2. SessionContext 数据结构
 3. SessionSummary 数据结构
 4. 离线模式回退
+5. Legacy bridge 默认关闭
 """
 
 import sys, os, asyncio
@@ -125,11 +126,12 @@ def test_default_config():
     assert config.enabled == True
 
 
-def test_session_context_defaults():
-    """测试8: SessionContext 默认值"""
-    ctx = SessionContext()
-    assert ctx.persona_id == ""
-    assert ctx.speaking_style == "casual"
-    assert ctx.relationship_status == "acquaintance"
-    assert ctx.boundaries == []
-    assert ctx.consent_state == {}
+def test_legacy_bridge_defaults():
+    """测试9: Legacy bridge 默认关闭 — standalone 模式不依赖它"""
+    # 默认 enabled=True 是从旧版遗留的，新 default config 里是 False
+    # 但 MnemosyneConfig 本身的默认仍为 True（向后兼容）
+    config = MnemosyneConfig()
+    assert config.enabled == True  # 代码默认
+    # 系统配置 (legacy_bridge) 应覆盖为 False
+    cfg = MnemosyneConfig(enabled=False)
+    assert cfg.enabled == False

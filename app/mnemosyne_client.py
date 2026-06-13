@@ -1,12 +1,8 @@
 """
-主项目 (Project Mnemosyne) API 客户端 (V6 完善版)
+Legacy Bridge — Project Mnemosyne API 客户端（历史兼容）
 
-通过 HTTP API 与 Project Mnemosyne 通信。
-实现完整的主项目桥接：
-- 拉取人格会话上下文
-- 回写会话摘要
-- 回写视觉观察
-- 同步授权状态
+默认关闭。仅在 legacy_bridge.enabled=true 时激活。
+用于可选的历史系统对接，不是主路径。
 """
 
 from dataclasses import dataclass, field
@@ -68,7 +64,7 @@ class SessionContext:
 
 @dataclass
 class SessionSummaryPayload:
-    """回写主项目的会话摘要"""
+    """Legacy bridge 会话摘要回写"""
     persona_id: str
     start_time: str
     end_time: str
@@ -93,7 +89,7 @@ class SessionSummaryPayload:
 
 @dataclass
 class VideoTurnResponse:
-    """主项目对视频 turn 的回复"""
+    """Legacy bridge 对 video turn 的回复"""
     reply_text: str = ""
     voice_style: str = "natural"
     expression: str = "neutral"
@@ -117,7 +113,7 @@ class VideoTurnResponse:
 
 
 class MnemosyneClient:
-    """主项目 API 客户端"""
+    """Legacy bridge API 客户端"""
 
     def __init__(self, config: Optional[MnemosyneConfig] = None):
         self.config = config or MnemosyneConfig()

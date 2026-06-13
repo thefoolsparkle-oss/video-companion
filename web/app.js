@@ -1,8 +1,8 @@
 /**
- * Video Companion 前端逻辑 (v0.2-dev)
+ * Video Companion 前端逻辑 (v0.3-dev)
  *
- * video-companion 不负责人格回复。
- * 人格回复由主项目 turn 接口提供，离线时使用基础模板回退。
+ * AI VTuber 实时感知与互动核心前端。
+ * 独立运行模式，不依赖主项目。
  */
 
 (function () {

@@ -1,9 +1,8 @@
 """
-/api/video/turn 请求/返回接口契约测试
+/api/video/turn 接口契约测试 (Legacy bridge)
 
-video-companion 只提交语音文本、视觉观察、session_id、persona_id、turn_index。
-主项目返回 reply_text、voice_style、expression、memory_policy。
-video-companion 不直接写长期记忆，只提交候选观察和会话摘要。
+仅在 legacy_bridge.enabled=true 时使用。
+video-companion 默认以 standalone AI VTuber 模式运行。
 """
 
 import sys, os

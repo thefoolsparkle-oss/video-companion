@@ -1,4 +1,4 @@
-# Video Companion Test Suite Runner
+# Video Companion Test Suite Runner — AI VTuber Standalone Mode
 # 运行所有模块测试
 # 用法: python run_tests.py
 

@@ -1,10 +1,11 @@
 """
 Video Companion 主服务入口
 
-video-companion 是 Project Mnemosyne 的"视频感官与通话通道"。
-不负责人格、记忆、聊天产品。
+AI VTuber 项目的实时感知与互动核心。
+负责：摄像头观察、麦克风输入、ASR、TTS、本地视觉观察、
+     本地角色对话、短期会话上下文、会话状态管理、隐私与授权控制。
 
-当前状态：V1-V6 开发骨架，部分模块已可用，尚未完成完整闭环。
+独立运行，不依赖 Project Mnemosyne / 忆界树。
 """
 
 import asyncio
@@ -39,6 +40,7 @@ from .local_vision import LocalVisionDetector, VideoObservation
 from .vision_provider import VisionProviderManager, VisionProviderConfig
 from .speech_provider import SpeechProviderManager, SpeechConfig
 from .mnemosyne_client import MnemosyneClient, MnemosyneConfig
+from .avatar_state import AvatarState
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,16 +48,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger("video-companion")
 
-# 默认配置
+# 默认配置 — 独立 AI VTuber 模式
 DEFAULT_CONFIG = {
+    "project": {"mode": "standalone_ai_vtuber", "name": "Video Companion", "description": "AI VTuber realtime perception and interaction core"},
     "server": {"host": "127.0.0.1", "port": 8001, "cors_origins": ["http://localhost:8001"]},
     "camera": {"width": 640, "height": 480, "fps": 15, "capture_interval_sec": 2.0, "default_on": False},
     "microphone": {"sample_rate": 16000, "chunk_size": 1024, "default_on": False},
     "local_vision": {"detection_interval_sec": 1.0, "enabled_detectors": ["face", "motion"], "face_confidence": 0.5, "motion_sensitivity": 0.3},
     "vision_provider": {"provider": "mock", "model": "gpt-4o", "max_frames_per_minute": 6, "max_cost_per_hour": 0.5, "max_cost_per_day": 2.0, "max_resolution": 1024, "fallback_on_limit": "skip", "api_key_env": "OPENAI_API_KEY", "api_base": "https://api.openai.com/v1", "default_on": False},
     "speech": {"asr": {"provider": "mock", "model": "whisper-1", "language": "zh"}, "tts": {"provider": "mock", "model": "tts-1", "voice": "alloy", "speed": 1.0, "streaming": True, "interruptible": True}, "api_key_env": "OPENAI_API_KEY"},
-    "mnemosyne": {"api_base": "http://127.0.0.1:8000", "api_key_env": "MNEMOSYNE_API_KEY", "timeout": 10, "retries": 2, "enabled": True},
-    "privacy": {"defaults": {"camera": False, "microphone": False, "external_vision": False, "save_summary": False, "save_observation": False}, "save_raw_media": False, "log_redact_pii": True},
+    "legacy_bridge": {"api_base": "http://127.0.0.1:8000", "api_key_env": "MNEMOSYNE_API_KEY", "timeout": 10, "retries": 2, "enabled": False},
+    "persona": {"name": "Mio", "display_name": "澪", "language": "zh", "style": "自然、简短、温和、稍微冷静", "max_reply_chars": 100, "allow_visual_comment": True, "avoid_fake_memory": True},
+    "privacy": {"defaults": {"camera": False, "microphone": False, "external_vision": False, "save_summary": False, "save_observation": False}, "save_raw_media": False, "log_redact_pii": True, "camera_default": False, "microphone_default": False, "external_vision_default": False},
     "cost": {"max_frames_per_minute": 6, "max_cost_per_hour": 0.5, "max_cost_per_day": 2.0, "on_limit": "skip"},
 }
 
@@ -132,13 +136,13 @@ class VideoCompanionServer:
             api_key_env=sp_cfg.get("api_key_env", "OPENAI_API_KEY"),
         ))
 
-        mn_cfg = self.config.get("mnemosyne", {})
+        lb_cfg = self.config.get("legacy_bridge", self.config.get("mnemosyne", {}))
         self.mnemosyne = MnemosyneClient(MnemosyneConfig(
-            api_base=mn_cfg.get("api_base", "http://127.0.0.1:8000"),
-            api_key_env=mn_cfg.get("api_key_env", "MNEMOSYNE_API_KEY"),
-            timeout=mn_cfg.get("timeout", 10),
-            retries=mn_cfg.get("retries", 2),
-            enabled=mn_cfg.get("enabled", True),
+            api_base=lb_cfg.get("api_base", "http://127.0.0.1:8000"),
+            api_key_env=lb_cfg.get("api_key_env", "MNEMOSYNE_API_KEY"),
+            timeout=lb_cfg.get("timeout", 10),
+            retries=lb_cfg.get("retries", 2),
+            enabled=lb_cfg.get("enabled", False),
         ))
 
         self._active_ws: Set[WebSocket] = set()
@@ -164,13 +168,13 @@ class VideoCompanionServer:
         await self.vision.initialize()
         await self.speech.initialize()
         await self.mnemosyne.initialize()
-        # 启动主项目重连轮询
+        # 启动 legacy bridge 重连轮询（默认关闭，轮询也无效）
         self._reconnect_task = asyncio.create_task(self._mnemosyne_reconnect_loop())
         logger.info("All modules initialized")
         logger.info("=" * 50)
 
     async def _mnemosyne_reconnect_loop(self):
-        """后台轮询主项目重连，每 30 秒尝试一次"""
+        """后台轮询 legacy bridge 重连，每 30 秒尝试一次"""
         while True:
             await asyncio.sleep(30)
             if not self.mnemosyne.is_connected():
@@ -402,6 +406,17 @@ class VideoCompanionServer:
             total_latency = int((time.time() - t0) * 1000)
 
             # 3. 发送回复给前端
+            obs = self.media_session.get_latest_observation()
+            avatar_state = AvatarState.from_visual_state(
+                presence_status=obs.get("presence_status", "unknown") if obs else "unknown",
+                face_mood=obs.get("face", {}).get("rough_mood") if obs else None,
+                motion_level=obs.get("motion", {}).get("level", "still") if obs else "still",
+            )
+            if turn.ai_response_text:
+                avatar_state.mouth_open = True
+                avatar_state.speaking = True
+                avatar_state.expression = "talking"
+
             response = {
                 "type": "ai_response",
                 "turn_id": turn.turn_id,
@@ -412,6 +427,7 @@ class VideoCompanionServer:
                 "visual_context": turn.visual_context,
                 "asr_source": asr_source,
                 "reply_source": turn.reply_source,
+                "avatar_state": avatar_state.to_dict(),
             }
             await ws.send_json(response)
 
@@ -429,7 +445,7 @@ class VideoCompanionServer:
                 "text": turn.ai_response_text,
             })
 
-            # 5. 重要观察回写主项目
+            # 5. 重要观察回写 legacy bridge（可选）
             if (self.consent.can_save_observation() and
                 self.media_session.get_latest_observation() and
                 self.mnemosyne.is_connected()):
@@ -541,7 +557,8 @@ class VideoCompanionServer:
 
         return {
             "service": "Video Companion",
-            "version": "0.2.0-dev",
+            "version": "0.3.0-dev",
+            "project_mode": "standalone_ai_vtuber",
             "uptime_sec": round(time.time() - self._server_start_time, 1),
             "session_state": session_state,
             "duration_sec": round(duration, 1),
@@ -564,8 +581,8 @@ def create_app(server: VideoCompanionServer) -> FastAPI:
 
     app = FastAPI(
         title="Video Companion",
-        version="0.2.0-dev",
-        description="实时视频陪伴模块 — 视频感官与通话通道",
+        version="0.3.0-dev",
+        description="AI VTuber 实时感知与互动核心 — 独立运行",
     )
 
     cors_origins = server.config.get("server", {}).get("cors_origins", ["*"])
@@ -589,7 +606,7 @@ def create_app(server: VideoCompanionServer) -> FastAPI:
             index_path = web_dir / "index.html"
             if index_path.exists():
                 return HTMLResponse(index_path.read_text(encoding="utf-8"))
-        return {"service": "Video Companion", "version": "0.2.0-dev", "docs": "/docs"}
+        return {"service": "Video Companion", "version": "0.3.0-dev", "project_mode": "standalone_ai_vtuber", "docs": "/docs"}
 
     @app.get("/api/status")
     async def get_status():
@@ -670,7 +687,7 @@ def create_app(server: VideoCompanionServer) -> FastAPI:
         server.consent.revoke_camera(reason="session_stop")
         server.consent.revoke_microphone(reason="session_stop")
         server.consent.revoke_external_vision(reason="session_stop")
-        # 停止会话（生成摘要、回写主项目）
+        # 停止会话（生成摘要、回写 legacy bridge）
         summary = await server.stop_session()
         return {
             "status": "stopped",

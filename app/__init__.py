@@ -1,1 +1,1 @@
-# Video Companion - 实时视频陪伴独立项目
+# Video Companion — AI VTuber 实时感知与互动核心

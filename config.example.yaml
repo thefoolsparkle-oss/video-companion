@@ -1,5 +1,11 @@
-# Video Companion 配置
+# Video Companion 配置 — AI VTuber 实时感知与互动核心
 # 复制为 config.yaml 后填入 API Key
+# 独立运行模式，不依赖 Project Mnemosyne / 忆界树
+
+project:
+  mode: "standalone_ai_vtuber"
+  name: "Video Companion"
+  description: "AI VTuber realtime perception and interaction core"
 
 server:
   host: "127.0.0.1"
@@ -60,13 +66,23 @@ speech:
     interruptible: true
   api_key_env: "OPENAI_API_KEY"
 
-# 主项目 Mnemosyne 桥接
-mnemosyne:
-  enabled: true
+# Legacy bridge — Mnemosyne 桥接（默认关闭，仅历史兼容）
+legacy_bridge:
+  enabled: false
   api_base: "http://127.0.0.1:8000"
   api_key_env: "MNEMOSYNE_API_KEY"
   timeout: 10
   retries: 2
+
+# AI VTuber 角色
+persona:
+  name: "Mio"
+  display_name: "澪"
+  language: "zh"
+  style: "自然、简短、温和、稍微冷静"
+  max_reply_chars: 100
+  allow_visual_comment: true
+  avoid_fake_memory: true
 
 # 隐私
 privacy:
@@ -78,6 +94,9 @@ privacy:
     save_observation: false
   save_raw_media: false
   log_redact_pii: true
+  camera_default: false
+  microphone_default: false
+  external_vision_default: false
 
 # 成本
 cost:
