@@ -100,6 +100,8 @@ def main():
     from tests import test_speech_provider
     from tests import test_media_session
     from tests import test_mnemosyne_client
+    from tests import test_rest_api
+    from tests import test_video_turn_contract
 
     runner = TestRunner()
 
@@ -111,6 +113,8 @@ def main():
     runner.run_module("test_speech_provider", test_speech_provider)
     runner.run_module("test_media_session", test_media_session)
     runner.run_module("test_mnemosyne_client", test_mnemosyne_client)
+    runner.run_module("test_rest_api", test_rest_api)
+    runner.run_module("test_video_turn_contract", test_video_turn_contract)
 
     ok = runner.summary()
     return 0 if ok else 1
