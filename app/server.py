@@ -1,8 +1,10 @@
 """
-Video Companion 主服务入口 (V0-V8 完整版)
+Video Companion 主服务入口
 
-提供完整的 WebSocket/HTTP API，管理媒体会话、视觉检测、
-语音识别、对话生成和主项目桥接。
+video-companion 是 Project Mnemosyne 的"视频感官与通话通道"。
+不负责人格、记忆、聊天产品。
+
+当前状态：V1-V6 开发骨架，部分模块已可用，尚未完成完整闭环。
 """
 
 import asyncio
@@ -50,7 +52,7 @@ DEFAULT_CONFIG = {
     "camera": {"width": 640, "height": 480, "fps": 15, "capture_interval_sec": 2.0, "default_on": False},
     "microphone": {"sample_rate": 16000, "chunk_size": 1024, "default_on": False},
     "local_vision": {"detection_interval_sec": 1.0, "enabled_detectors": ["face", "motion"], "face_confidence": 0.5, "motion_sensitivity": 0.3},
-    "vision_provider": {"provider": "openai", "model": "gpt-4o", "max_frames_per_minute": 6, "max_cost_per_hour": 0.5, "max_cost_per_day": 2.0, "max_resolution": 1024, "fallback_on_limit": "skip", "api_key_env": "OPENAI_API_KEY", "api_base": "https://api.openai.com/v1", "default_on": False},
+    "vision_provider": {"provider": "mock", "model": "gpt-4o", "max_frames_per_minute": 6, "max_cost_per_hour": 0.5, "max_cost_per_day": 2.0, "max_resolution": 1024, "fallback_on_limit": "skip", "api_key_env": "OPENAI_API_KEY", "api_base": "https://api.openai.com/v1", "default_on": False},
     "speech": {"asr": {"provider": "openai_whisper", "model": "whisper-1", "language": "zh"}, "tts": {"provider": "openai_tts", "model": "tts-1", "voice": "alloy", "speed": 1.0, "streaming": True, "interruptible": True}, "api_key_env": "OPENAI_API_KEY"},
     "mnemosyne": {"api_base": "http://127.0.0.1:8000", "api_key_env": "MNEMOSYNE_API_KEY", "timeout": 10, "retries": 2, "enabled": True},
     "privacy": {"defaults": {"camera": False, "microphone": False, "external_vision": False, "save_summary": False, "save_observation": False}, "save_raw_media": False, "log_redact_pii": True},
@@ -285,7 +287,7 @@ class VideoCompanionServer:
         if not audio_data:
             return
 
-        # 接收音频
+        # 接收音频并累积到缓冲区
         chunk = self.audio.receive_audio(
             data_base64=audio_data,
             duration_ms=data.get("duration_ms", 200),
@@ -294,26 +296,80 @@ class VideoCompanionServer:
 
         # 检查是否结束说话（VAD 检测到静音区间）
         vad_ended = data.get("vad_ended", False)
-        vad_text = data.get("vad_text", "")
+        vad_text = data.get("vad_text", "").strip()
 
-        if vad_ended and vad_text:
-            # 用户说完了一段话
-            await self._process_speech_turn(ws, vad_text, data.get("confidence", 0.0))
+        if not vad_ended:
+            return  # 仍在说话，继续累积
+
+        # 用户说完了一段话 —— 确定用什么文本
+        speech_text = ""
+        asr_source = "unknown"
+
+        if vad_text:
+            # 浏览器端 SpeechRecognition 提供了文本（低成本辅助路径）
+            speech_text = vad_text
+            asr_source = "browser_asr"
+
+        else:
+            # 没有浏览器端识别结果 —— 调用后端 ASR
+            audio_bytes = self.audio.get_accumulated_audio_bytes()
+
+            if not audio_bytes:
+                await ws.send_json({
+                    "type": "system_error",
+                    "code": "asr_no_audio",
+                    "message": "未收到有效音频数据，无法识别语音。",
+                })
+                self.audio.clear_buffer()
+                return
+
+            try:
+                transcript = await self.speech.transcribe(audio_bytes)
+            except Exception as e:
+                logger.error("ASR exception: %s", e)
+                transcript = None
+
+            if transcript and transcript.text and not transcript.error:
+                speech_text = transcript.text
+                asr_source = "backend_asr"
+                logger.info("ASR result (confidence=%.2f): %s",
+                            transcript.confidence, speech_text[:60])
+            else:
+                err_msg = transcript.error if transcript else "ASR 服务不可用"
+                await ws.send_json({
+                    "type": "system_error",
+                    "code": "asr_failed",
+                    "message": f"语音识别失败：{err_msg}",
+                })
+                self.audio.clear_buffer()
+                return
+
+        # 清理音频缓冲区（无论走哪条路径，一旦处理就清空）
+        self.audio.clear_buffer()
+
+        # 进入对话处理
+        await self._process_speech_turn(
+            ws, speech_text,
+            confidence=data.get("confidence", 0.0),
+            asr_source=asr_source,
+        )
 
     async def _handle_text(self, ws: WebSocket, data: dict):
         """处理文本输入（键盘输入回退）"""
         text = data.get("text", "").strip()
         if not text:
             return
-        await self._process_speech_turn(ws, text, 1.0)
+        await self._process_speech_turn(ws, text, 1.0, asr_source="text_input")
 
     async def _process_speech_turn(self, ws: WebSocket, text: str,
-                                   confidence: float = 0.0):
+                                   confidence: float = 0.0,
+                                   asr_source: str = "unknown"):
         """处理一轮完整语音对话"""
         if not self.media_session or not self.media_session.is_active():
             await ws.send_json({
-                "type": "error",
-                "message": "No active session. Start a session first."
+                "type": "system_error",
+                "code": "no_session",
+                "message": "没有活动中的会话。请先开始会话。"
             })
             return
 
@@ -324,7 +380,7 @@ class VideoCompanionServer:
             turn = await self.media_session.process_user_speech(
                 speech_text=text,
                 speech_confidence=confidence,
-                asr_latency_ms=0,  # 文本输入没有 ASR 延迟
+                asr_latency_ms=0,
             )
 
             # 2. TTS 合成
@@ -341,6 +397,8 @@ class VideoCompanionServer:
                 "audio_format": tts_result.format if tts_result else "mp3",
                 "total_latency_ms": total_latency,
                 "visual_context": turn.visual_context,
+                "asr_source": asr_source,
+                "reply_source": turn.reply_source,
             }
             await ws.send_json(response)
 
@@ -370,9 +428,11 @@ class VideoCompanionServer:
 
         except Exception as e:
             logger.error("Speech turn processing error: %s", e)
-            self.media_session.stats.errors += 1
+            if self.media_session:
+                self.media_session.stats.errors += 1
             await ws.send_json({
-                "type": "error",
+                "type": "system_error",
+                "code": "turn_failed",
                 "message": f"处理失败: {str(e)[:100]}"
             })
 
@@ -392,25 +452,32 @@ class VideoCompanionServer:
                     pass
 
     async def _handle_consent_ws(self, ws: WebSocket, data: dict):
-        """WebSocket 授权变更"""
+        """WebSocket 授权变更 — 统一经过 ConsentManager 公开方法"""
         item = data.get("item", "")
         granted = data.get("granted", False)
+        reason = data.get("reason", "ws_client")
 
-        try:
-            ci = ConsentItem(item)
-        except ValueError:
+        if not item:
+            return
+
+        # 映射到 ConsentManager 公开方法（统一入口，经过审计）
+        item_methods = {
+            "camera": (self.consent.grant_camera, self.consent.revoke_camera),
+            "microphone": (self.consent.grant_microphone, self.consent.revoke_microphone),
+            "external_vision": (self.consent.grant_external_vision, self.consent.revoke_external_vision),
+        }
+
+        if item not in item_methods:
             await ws.send_json({"type": "error", "message": f"Unknown consent item: {item}"})
             return
 
-        old_val = getattr(self.consent.state, item)
+        grant_fn, revoke_fn = item_methods[item]
         if granted:
-            self.consent.state.grant(ci)
-            self.consent._record_change(ci, old_val, True, "ws_client")
+            grant_fn(reason=reason)
         else:
-            self.consent.state.revoke(ci)
-            self.consent._record_change(ci, old_val, False, "ws_client")
+            revoke_fn(reason=reason)
 
-        # 联动
+        # 硬件联动
         if item == "camera":
             if granted:
                 await self.camera.start()
@@ -424,6 +491,7 @@ class VideoCompanionServer:
         elif item == "external_vision":
             self.vision.set_enabled(granted)
 
+        # 广播最新状态
         await ws.send_json({
             "type": "consent_changed",
             "item": item,
@@ -460,7 +528,7 @@ class VideoCompanionServer:
 
         return {
             "service": "Video Companion",
-            "version": "0.8.0",
+            "version": "0.2.0-dev",
             "uptime_sec": round(time.time() - self._server_start_time, 1),
             "session_state": session_state,
             "duration_sec": round(duration, 1),
@@ -483,8 +551,8 @@ def create_app(server: VideoCompanionServer) -> FastAPI:
 
     app = FastAPI(
         title="Video Companion",
-        version="0.8.0",
-        description="实时视频陪伴独立服务",
+        version="0.2.0-dev",
+        description="实时视频陪伴模块 — 视频感官与通话通道",
     )
 
     cors_origins = server.config.get("server", {}).get("cors_origins", ["*"])
@@ -508,7 +576,7 @@ def create_app(server: VideoCompanionServer) -> FastAPI:
             index_path = web_dir / "index.html"
             if index_path.exists():
                 return HTMLResponse(index_path.read_text(encoding="utf-8"))
-        return {"service": "Video Companion", "version": "0.8.0", "docs": "/docs"}
+        return {"service": "Video Companion", "version": "0.2.0-dev", "docs": "/docs"}
 
     @app.get("/api/status")
     async def get_status():
@@ -524,33 +592,43 @@ def create_app(server: VideoCompanionServer) -> FastAPI:
 
     @app.post("/api/consent/{item}/grant")
     async def grant_consent(item: str):
-        try:
-            ci = ConsentItem(item)
-            server.consent.state.grant(ci)
-            return {"status": "granted", "item": item}
-        except ValueError:
+        mapping = {
+            "camera": (server.consent.grant_camera, lambda: None),
+            "microphone": (server.consent.grant_microphone, lambda: None),
+            "external_vision": (server.consent.grant_external_vision, lambda: None),
+        }
+        if item not in mapping:
             return JSONResponse({"error": f"Unknown consent item: {item}"}, status_code=400)
+        grant_fn, _ = mapping[item]
+        grant_fn(reason="rest_api")
+        return {"status": "granted", "item": item}
 
     @app.post("/api/consent/{item}/revoke")
     async def revoke_consent(item: str):
-        try:
-            ci = ConsentItem(item)
-            server.consent.state.revoke(ci)
-            if item == "camera":
-                await server.camera.stop()
-            if item == "microphone":
-                await server.audio.stop_listening()
-            if item == "external_vision":
-                server.vision.set_enabled(False)
-            return {"status": "revoked", "item": item}
-        except ValueError:
+        mapping = {
+            "camera": (lambda: None, server.consent.revoke_camera),
+            "microphone": (lambda: None, server.consent.revoke_microphone),
+            "external_vision": (lambda: None, server.consent.revoke_external_vision),
+        }
+        if item not in mapping:
             return JSONResponse({"error": f"Unknown consent item: {item}"}, status_code=400)
+        _, revoke_fn = mapping[item]
+        revoke_fn(reason="rest_api")
+        if item == "camera":
+            await server.camera.stop()
+        if item == "microphone":
+            await server.audio.stop_listening()
+        if item == "external_vision":
+            server.vision.set_enabled(False)
+        return {"status": "revoked", "item": item}
 
     @app.post("/api/consent/revoke-all")
     async def revoke_all_consent():
         server.consent.revoke_all(reason="api_revoke_all")
         await server.camera.stop()
         await server.audio.stop_listening()
+        if server.speech:
+            server.speech.interrupt()
         server.vision.set_enabled(False)
         return {"status": "all_revoked"}
 
@@ -569,8 +647,25 @@ def create_app(server: VideoCompanionServer) -> FastAPI:
 
     @app.post("/api/session/stop")
     async def stop_session():
+        # 停止媒体采集
+        await server.camera.stop()
+        await server.audio.stop_listening()
+        # 中断 TTS 播放
+        if server.speech:
+            server.speech.interrupt()
+        # 停用外部视觉上传
+        server.vision.set_enabled(False)
+        # 撤销媒体相关授权
+        server.consent.revoke_camera(reason="session_stop")
+        server.consent.revoke_microphone(reason="session_stop")
+        server.consent.revoke_external_vision(reason="session_stop")
+        # 停止会话（生成摘要、回写主项目）
         summary = await server.stop_session()
-        return {"status": "stopped", "summary": summary}
+        return {
+            "status": "stopped",
+            "summary": summary,
+            "consent": server.consent.to_dict(),
+        }
 
     @app.get("/api/session/status")
     async def session_status():

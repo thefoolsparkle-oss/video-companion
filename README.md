@@ -1,84 +1,67 @@
 # Video Companion
 
-实时视频陪伴独立项目 —— 从 Project Mnemosyne 拆分出来的视频通话能力模块。
+实时视频陪伴模块 — Project Mnemosyne 的"摄像头、麦克风、视频通话管道"。
 
-## 功能范围
+**video-companion 不是独立 AI 伴侣产品，不是第二个人格系统，不是第二个记忆系统。**
 
-- 摄像头采集与实时抽帧
-- 麦克风输入与语音识别（ASR）
-- 本地视觉检测（人脸/人体/动作）
-- 外部视觉模型分析（可替换 provider）
-- 低延迟语音回复（TTS）
-- 与主项目的人格/记忆 API 桥接
-- 隐私授权与成本控制
+它只负责：摄像头采集、麦克风输入、视频抽帧、本地视觉检测、外部视觉模型调用（需授权）、ASR 语音识别、TTS 语音播放、视频会话状态管理、授权隐私成本控制、与主项目 API 桥接。
 
-## 不属于本项目
+它不负责：长期人格生成、长期记忆主权、核心聊天逻辑、用户账号体系、人格成长、关系变化。
 
-- 长期人格生成与记忆数据库主权
-- 核心聊天产品
-- 用户账号体系
+## 当前真实状态
+
+| 阶段 | 名称 | 状态 |
+| --- | --- | --- |
+| V1 | 本地视频会话壳 | 部分完成 — REST API + WebSocket 框架可用 |
+| V2 | 抽帧与本地感知 | 部分完成 — OpenCV 检测就绪，fallback 不编造结果 |
+| V3 | 视觉模型接口 | 骨架可用 — Provider 可替换，默认关闭，需继续验证 |
+| V4 | 语音输入输出 | TTS 骨架可用，ASR 链路已修复（后端转写） |
+| V5 | 多模态对话循环 | 主项目优先接口就绪，离线 fallback 可用 |
+| V6 | 主项目桥接 | 客户端草稿已存在，接口契约待主项目实现 |
+| V7 | 成本和隐私硬化 | 部分配置存在，授权已统一入口，审计可追溯 |
+| V8 | 体验打磨 | 未开始 |
+
+**video-companion 当前不是完整产品。**它是独立视频感官模块的开发骨架。它必须依赖主项目提供人格、记忆、关系和长期状态。
 
 ## 快速开始
 
 ```bash
-# 安装依赖
 pip install -r requirements.txt
-
-# 复制配置
 cp config.example.yaml config.yaml
-
-# 验证摄像头
-python scripts/verify_camera.py
-
-# 启动服务
-python app/server.py
+python run_tests.py          # 68 tests
+python -m app.server         # 启动服务 → http://localhost:8001
 ```
 
-## 目录结构
+## 目录
 
 ```
 video-companion/
   README.md
+  HANDOFF.md                  # 交接文档
   config.example.yaml
+  requirements.txt
+  run_tests.py
   app/
-    __init__.py
-    server.py              # 主服务入口
-    media_session.py       # 媒体会话管理
-    camera_source.py       # 摄像头采集抽象
-    audio_source.py        # 音频采集抽象
-    local_vision.py        # 本地视觉检测
-    vision_provider.py     # 外部视觉模型接口
-    speech_provider.py     # ASR/TTS 接口
-    mnemosyne_client.py    # 主项目 API 客户端
-    consent.py             # 用户授权管理
+    server.py                 # FastAPI 主服务 + WebSocket
+    consent.py                # 授权管理 + 审计
+    media_session.py          # 会话状态机 + 主项目优先对话
+    camera_source.py          # 摄像头采集抽象
+    audio_source.py           # 麦克风 + VAD + 音频缓冲
+    local_vision.py           # OpenCV 人脸/动作检测
+    vision_provider.py        # 外部视觉模型 Provider
+    speech_provider.py        # OpenAI Whisper ASR + TTS
+    mnemosyne_client.py       # 主项目 API 客户端
   web/
-    index.html
-    app.js
-    style.css
+    index.html / app.js / style.css
   scripts/
-    verify_camera.py
-    verify_vision_provider.py
-    verify_mnemosyne_bridge.py
+    verify_camera.py / verify_vision_provider.py / verify_mnemosyne_bridge.py
+  tests/
+    8 模块，68 测试
 ```
 
-## 阶段计划
+## 隐私
 
-| 阶段 | 名称 | 状态 |
-| --- | --- | --- |
-| V0 | 技术预研 | 待开始 |
-| V1 | 本地视频会话壳 | 待开始 |
-| V2 | 抽帧与本地感知 | 待开始 |
-| V3 | 视觉模型接口 | 待开始 |
-| V4 | 语音输入输出 | 待开始 |
-| V5 | 多模态对话循环 | 待开始 |
-| V6 | 主项目桥接 | 待开始 |
-| V7 | 成本和隐私硬化 | 待开始 |
-| V8 | 体验打磨 | 待开始 |
-
-## 隐私与安全
-
-- 摄像头、麦克风、外部视觉模型上传默认关闭
+- 摄像头、麦克风、外部视觉模型默认关闭
 - 需用户分别明确授权
-- 不保存原始视频帧、音频和截图
-- UI 持续显示授权状态
-- 用户随时可关闭会话
+- 不保存原始视频帧和音频
+- 授权变更全部审计可追溯

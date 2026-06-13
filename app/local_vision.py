@@ -95,7 +95,11 @@ class MotionDetection:
 class VideoObservation:
     """视频画面结构化观察"""
     timestamp: float
-    user_present: bool = False
+    # user_present: True=检测到人脸, False=明确无人, None=未知
+    user_present: Optional[bool] = None
+    presence_status: str = "unknown"    # present | absent | unknown | unusable
+    presence_confidence: float = 0.0
+    detector_available: bool = False
     camera_usable: bool = True
     face: FaceDetection = field(default_factory=FaceDetection)
     body: BodyDetection = field(default_factory=BodyDetection)
@@ -103,7 +107,6 @@ class VideoObservation:
     object_hint: Optional[str] = None
     external_analysis: bool = False
     external_description: Optional[str] = None
-    # 画质
     brightness: float = 0.0
     blur_score: float = 0.0
     is_usable: bool = True
@@ -112,6 +115,9 @@ class VideoObservation:
         return {
             "timestamp": self.timestamp,
             "user_present": self.user_present,
+            "presence_status": self.presence_status,
+            "presence_confidence": self.presence_confidence,
+            "detector_available": self.detector_available,
             "camera_usable": self.camera_usable,
             "face": self.face.to_dict(),
             "body": self.body.to_dict(),
@@ -125,27 +131,20 @@ class VideoObservation:
         }
 
     def to_api_payload(self) -> dict:
-        return {
-            "timestamp": self.timestamp,
-            "user_present": self.user_present,
-            "camera_usable": self.camera_usable,
-            "face": self.face.to_dict(),
-            "body": self.body.to_dict(),
-            "motion": self.motion.to_dict(),
-            "object_hint": self.object_hint,
-            "external_analysis": self.external_analysis,
-            "external_description": self.external_description,
-        }
+        return self.to_dict()
 
     def summary(self) -> str:
-        """生成人类可读的摘要"""
         parts = []
-        if self.user_present:
+        if self.presence_status == "present":
             parts.append("检测到用户")
             if self.face.rough_mood != MoodLabel.UNKNOWN:
                 parts.append(f"情绪: {self.face.rough_mood.value}")
-        else:
+        elif self.presence_status == "absent":
             parts.append("未检测到用户")
+        elif self.presence_status == "unusable":
+            parts.append("画面不可用")
+        else:
+            parts.append("用户在场状态未知")
         if self.motion.level != MotionLabel.STILL:
             parts.append(f"动作: {self.motion.level.value}")
         if self.object_hint:
@@ -219,49 +218,76 @@ class LocalVisionDetector:
         observation = VideoObservation(
             timestamp=timestamp,
             camera_usable=True,
+            user_present=None,
+            presence_status="unknown",
+            presence_confidence=0.0,
+            detector_available=False,
         )
 
         if not data_base64:
             observation.camera_usable = False
+            observation.presence_status = "unknown"
             return observation
 
-        # 解码图像
-        if HAS_OPENCV:
-            img = self._decode_base64_to_np(data_base64)
-            if img is None:
-                observation.camera_usable = False
-                return observation
+        if not HAS_OPENCV:
+            observation.presence_status = "unknown"
+            observation.detector_available = False
+            return observation
 
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img = self._decode_base64_to_np(data_base64)
+        if img is None:
+            observation.camera_usable = False
+            observation.presence_status = "unknown"
+            return observation
 
-            # 人脸检测
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # 画质评估（先做——太暗或太模糊直接判定不可用）
+        observation.brightness = self._calculate_brightness(gray)
+        observation.blur_score = self._calculate_blur(gray)
+        observation.is_usable = self._assess_usability(observation)
+
+        if not observation.is_usable:
+            observation.presence_status = "unusable"
+            observation.camera_usable = True  # 摄像头是开的但画面不可用
+            self._prev_frame_gray = gray
+            return observation
+
+        # 检查人脸检测器是否可用
+        detector_ok = (self._face_detector is not None and
+                       not self._face_detector.empty())
+        observation.detector_available = detector_ok
+
+        if detector_ok:
+            # 真实人脸检测
             face = self._detect_face_opencv(gray)
             observation.face = face
-            observation.user_present = face.present
-
-            # 动作检测
-            motion = self._detect_motion_opencv(gray)
-            observation.motion = motion
-
-            # 画质评估
-            observation.brightness = self._calculate_brightness(gray)
-            observation.blur_score = self._calculate_blur(gray)
-            observation.is_usable = self._assess_usability(observation)
-
-            self._prev_frame_gray = gray
+            observation.face.confidence = face.confidence
+            if face.present:
+                observation.user_present = True
+                observation.presence_status = "present"
+                observation.presence_confidence = face.confidence
+            else:
+                observation.user_present = False
+                observation.presence_status = "absent"
+                observation.presence_confidence = face.confidence
         else:
-            # 纯 Python 回退 —— 标记为可用但未知
-            observation.user_present = True  # 保守假设
-            observation.face.present = True
-            observation.face.count = 1
-            observation.is_usable = True
+            # 检测器不可用 → 未知
+            observation.user_present = None
+            observation.presence_status = "unknown"
+            observation.presence_confidence = 0.0
 
+        # 动作检测
+        motion = self._detect_motion_opencv(gray)
+        observation.motion = motion
+
+        self._prev_frame_gray = gray
         return observation
 
     def _detect_face_opencv(self, gray) -> FaceDetection:
         """OpenCV 人脸检测"""
         if self._face_detector is None or self._face_detector.empty():
-            return FaceDetection(present=True, count=1, confidence=0.5)
+            return FaceDetection(present=False, count=0, confidence=0.0)
         try:
             faces = self._face_detector.detectMultiScale(
                 gray, scaleFactor=1.1, minNeighbors=5,
@@ -278,7 +304,7 @@ class LocalVisionDetector:
             return FaceDetection(present=False, count=0, confidence=0.3)
         except Exception as e:
             logger.warning("Face detection error: %s", e)
-            return FaceDetection(present=True, count=1, confidence=0.3)
+            return FaceDetection(present=False, count=0, confidence=0.0)
 
     def _detect_motion_opencv(self, gray) -> MotionDetection:
         """基于帧差的动作检测"""

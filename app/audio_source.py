@@ -250,6 +250,18 @@ class AudioSource:
     def get_audio_buffer(self) -> List[AudioChunk]:
         return list(self._audio_buffer)
 
+    def get_accumulated_audio_bytes(self) -> bytes:
+        """将缓冲区中所有音频块解码并拼接为完整 bytes，用于后端 ASR"""
+        import base64
+        parts = []
+        for chunk in self._audio_buffer:
+            if chunk.data_base64:
+                try:
+                    parts.append(base64.b64decode(chunk.data_base64))
+                except Exception as e:
+                    logger.debug("Skipping bad audio chunk: %s", e)
+        return b"".join(parts)
+
     def clear_buffer(self):
         self._audio_buffer.clear()
         self._accumulated_duration_ms = 0

@@ -91,6 +91,28 @@ class SessionSummaryPayload:
         }
 
 
+@dataclass
+class VideoTurnResponse:
+    """主项目对视频 turn 的回复"""
+    reply_text: str = ""
+    voice_style: str = "natural"
+    expression: str = "neutral"
+    memory_policy: Dict[str, Any] = field(default_factory=lambda: {
+        "should_extract": False,
+        "candidate_only": True,
+    })
+    error: Optional[str] = None
+
+    @classmethod
+    def from_api_response(cls, data: dict) -> "VideoTurnResponse":
+        return cls(
+            reply_text=data.get("reply_text", ""),
+            voice_style=data.get("voice_style", "natural"),
+            expression=data.get("expression", "neutral"),
+            memory_policy=data.get("memory_policy", {}),
+        )
+
+
 class MnemosyneClient:
     """主项目 API 客户端"""
 
@@ -244,7 +266,8 @@ class MnemosyneClient:
             "timestamp": observation.get("timestamp", 0),
             "description": observation.get("external_description", ""),
             "confidence": observation.get("face", {}).get("confidence", 0),
-            "user_present": observation.get("user_present", False),
+            "user_present": observation.get("user_present"),
+            "presence_status": observation.get("presence_status", "unknown"),
             "object_hint": observation.get("object_hint"),
             "allow_long_term_memory": observation.get("allow_long_term_memory", False),
             "evidence_type": "video_observation",
@@ -267,6 +290,24 @@ class MnemosyneClient:
             "POST", "/api/video/consent", json_data=consent_payload
         )
         return result is not None
+
+    async def post_video_turn(self, turn_payload: dict) -> Optional[VideoTurnResponse]:
+        """调用主项目视频 turn 接口
+
+        POST /api/video/turn
+        """
+        logger.debug("Posting video turn for persona=%s turn=%d",
+                      turn_payload.get("persona_id", "?"),
+                      turn_payload.get("turn_index", 0))
+        result = await self._request(
+            "POST", "/api/video/turn", json_data=turn_payload
+        )
+        if result:
+            resp = VideoTurnResponse.from_api_response(result)
+            if resp.reply_text:
+                logger.info("Main project replied: %s...", resp.reply_text[:40])
+            return resp
+        return None
 
     async def close(self):
         """关闭连接"""

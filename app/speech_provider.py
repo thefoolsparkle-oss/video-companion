@@ -1,11 +1,9 @@
 """
-语音识别 (ASR) 和语音合成 (TTS) Provider 接口 — 工业级实现
+语音识别 (ASR) 和语音合成 (TTS) Provider 接口
 
-Provider:
-  ASR: OpenAI Whisper (云端) ｜ 默认，生产首选
-  TTS: OpenAI TTS (tts-1 / tts-1-hd) ｜ ElevenLabs (备选 premium)
-
-Mock 仅保留用于单元测试，不暴露给生产配置。
+ASR: OpenAI Whisper（云端）
+TTS: OpenAI TTS ｜ ElevenLabs（备选）
+Mock: 仅测试用
 """
 
 from abc import ABC, abstractmethod

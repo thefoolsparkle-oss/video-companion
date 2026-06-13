@@ -1,13 +1,8 @@
 /**
- * Video Companion V8 前端逻辑
+ * Video Companion 前端逻辑 (v0.2-dev)
  *
- * 功能：
- * - WebSocket 实时通信
- * - 摄像头采集 (getUserMedia) + 定时抽帧
- * - 麦克风采集 (Web Audio API) + VAD
- * - 语音播放 (Web Audio API)
- * - 授权控制与状态同步
- * - 对话日志
+ * video-companion 不负责人格回复。
+ * 人格回复由主项目 turn 接口提供，离线时使用基础模板回退。
  */
 
 (function () {
@@ -97,6 +92,7 @@
             case 'transcript': addTranscript(msg.speaker, msg.text, msg.turn_id); break;
             case 'interrupted': onInterrupted(); break;
             case 'consent_changed': syncConsentUI(msg.state); break;
+            case 'system_error': showSystemError(msg.code, msg.message); break;
             case 'error': showError(msg.message); break;
         }
     }
@@ -287,28 +283,20 @@
             }
         } catch (e) { /* ignore */ }
 
-        // Collect and send
+        // Collect and send to backend for ASR
         setTimeout(async () => {
             if (S.audioChunks.length === 0) return;
             const blob = new Blob(S.audioChunks, { type: 'audio/webm' });
             try {
                 const base64 = await blobToBase64(blob);
-                // Try browser speech recognition if available
-                let text = '';
-                let confidence = 0;
-                if (window.webkitSpeechRecognition || window.SpeechRecognition) {
-                    text = await trySpeechRecognition(S.audioChunks);
-                    confidence = text ? 0.8 : 0;
-                }
-
                 send({
                     type: 'speech_input',
                     data: base64,
                     duration_ms: Date.now() - S.recordingStartTime,
                     sample_rate: 16000,
                     vad_ended: true,
-                    vad_text: text,
-                    confidence: confidence,
+                    vad_text: '', // 交给后端 ASR 处理
+                    confidence: 0,
                 });
             } catch (e) {
                 console.error('Audio send error:', e);
@@ -317,28 +305,9 @@
         }, 300);
     }
 
-    function trySpeechRecognition(chunks) {
-        return new Promise((resolve) => {
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) { resolve(''); return; }
-
-            const recognition = new SR();
-            recognition.lang = 'zh-CN';
-            recognition.interimResults = false;
-            recognition.continuous = false;
-
-            recognition.onresult = (e) => {
-                resolve(e.results[0][0].transcript);
-            };
-            recognition.onerror = () => resolve('');
-            recognition.onend = () => resolve('');
-
-            // We can't directly feed chunks to SpeechRecognition,
-            // so just attempt a quick recognition from mic
-            setTimeout(() => resolve(''), 2000);
-            try { recognition.start(); } catch (e) { resolve(''); }
-        });
-    }
+    // trySpeechRecognition removed — browser SpeechRecognition cannot transcribe
+    // recorded audio chunks reliably. Backend ASR (OpenAI Whisper) is the
+    // primary transcription path.
 
     function stopMicrophone() {
         if (S.mediaRecorder && S.mediaRecorder.state !== 'inactive') {
@@ -438,20 +407,27 @@
         $('#obs-timestamp').textContent = data.timestamp
             ? new Date(data.timestamp * 1000).toLocaleTimeString() : '';
 
-        const presence = data.user_present ? '✅ 在线' : '❌ 未检测到';
-        $('#obs-presence').textContent = presence;
+        const status = data.presence_status || 'unknown';
+        const presenceMap = {
+            'present': '✅ 检测到用户',
+            'absent': '❌ 未检测到',
+            'unknown': '❓ 无法判断',
+            'unusable': '⚠ 画面不可用',
+        };
+        $('#obs-presence').textContent = presenceMap[status] || status;
 
         const face = data.face || {};
         $('#obs-face').textContent = face.present
             ? `检测到 (${face.rough_mood || '未知情绪'})`
-            : '未检测到';
+            : (data.detector_available ? '未检测到' : '检测器不可用');
 
         const motion = data.motion || {};
-        $('#obs-motion').textContent = motion.level || '静止';
+        $('#obs-motion').textContent = motion.level || '未知';
 
         let quality = '正常';
         if (data.is_usable === false) quality = '⚠ 不佳';
         if (data.brightness < 0.05) quality = '⚠ 过暗';
+        if (!data.detector_available) quality += ' (无检测器)';
         $('#obs-quality').textContent = quality;
 
         if (external && external.description) {
@@ -488,19 +464,24 @@
         }
     }
 
+    function showSystemError(code, msg) {
+        addTranscript('system', '[错误 ' + code + '] ' + msg);
+        // 不进入 AI 回复，只显示系统错误
+    }
+
     function showError(msg) {
         addTranscript('system', '⚠ ' + msg);
     }
 
     // ============ 授权控制 ============
+    // 授权变更全部走 WebSocket，不再同时发 REST 请求。
+    // REST /api/consent 保留为只读或外部系统调用。
     $('#consent-camera').addEventListener('change', async () => {
         const g = $('#consent-camera').checked;
         S.consent.camera = g;
         if (g) await startCamera();
         else stopCamera();
         send({ type: 'consent_update', item: 'camera', granted: g });
-        try { await fetch('/api/consent/camera/' + (g ? 'grant' : 'revoke'), { method: 'POST' }); }
-        catch (e) { /* ignore */ }
     });
 
     $('#consent-microphone').addEventListener('change', async () => {
@@ -509,16 +490,12 @@
         if (g) await startMicrophone();
         else stopMicrophone();
         send({ type: 'consent_update', item: 'microphone', granted: g });
-        try { await fetch('/api/consent/microphone/' + (g ? 'grant' : 'revoke'), { method: 'POST' }); }
-        catch (e) { /* ignore */ }
     });
 
     $('#consent-vision').addEventListener('change', () => {
         const g = $('#consent-vision').checked;
         S.consent.external_vision = g;
         send({ type: 'consent_update', item: 'external_vision', granted: g });
-        try { fetch('/api/consent/external_vision/' + (g ? 'grant' : 'revoke'), { method: 'POST' }); }
-        catch (e) { /* ignore */ }
     });
 
     // ============ 会话控制 ============
@@ -547,9 +524,14 @@
                     '轮次: ' + (data.summary ? data.summary.total_turns : 0) + ')');
                 stopCamera();
                 stopMicrophone();
-                $('#consent-camera').checked = false;
-                $('#consent-microphone').checked = false;
-                $('#consent-vision').checked = false;
+                // 同步后端授权状态到 UI
+                if (data.consent) {
+                    syncConsentUI(data.consent);
+                } else {
+                    $('#consent-camera').checked = false;
+                    $('#consent-microphone').checked = false;
+                    $('#consent-vision').checked = false;
+                }
             }
         } catch (e) { addTranscript('system', '停止失败: ' + e.message); }
     });

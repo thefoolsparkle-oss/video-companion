@@ -39,7 +39,8 @@ def test_empty_frame():
         timestamp=time.time()
     ))
     assert obs.camera_usable == False
-    assert obs.user_present == False
+    assert obs.user_present is None
+    assert obs.presence_status == "unknown"
 
 
 def test_fallback_mode():
@@ -47,21 +48,19 @@ def test_fallback_mode():
     detector = LocalVisionDetector()
     asyncio.run(_init(detector))
 
-    # 即使是用假数据，回退模式也应返回结果
-    fake_b64 = base64.b64encode(b"\x00" * 100).decode()
     obs = asyncio.run(detector.detect(
-        data_base64=fake_b64, width=640, height=480,
+        data_base64="test", width=640, height=480,
         timestamp=time.time()
     ))
 
-    # 回退模式保守假设用户在场
     if not sys.modules.get('cv2'):
-        assert obs.user_present == True
-        assert obs.face.present == True
-        assert obs.is_usable == True
+        # 无 OpenCV：状态应为 unknown
+        assert obs.user_present is None
+        assert obs.presence_status == "unknown"
+        assert obs.detector_available == False
     else:
-        # 有 OpenCV 时，假数据可能检测不到人脸
-        pass  # 不做断言，因为假数据结果不确定
+        # 有 OpenCV：假数据可能检测不到人脸 → absent 或 unknown
+        assert obs.user_present is not True or obs.presence_status != "unknown"
 
 
 def test_video_observation_to_dict():
@@ -69,6 +68,9 @@ def test_video_observation_to_dict():
     obs = VideoObservation(
         timestamp=time.time(),
         user_present=True,
+        presence_status="present",
+        presence_confidence=0.9,
+        detector_available=True,
         camera_usable=True,
         face=FaceDetection(present=True, count=1, rough_mood=MoodLabel.NEUTRAL),
         motion=MotionDetection(level=MotionLabel.SLIGHT, motion_score=0.15),
@@ -76,6 +78,9 @@ def test_video_observation_to_dict():
     )
     d = obs.to_dict()
     assert d["user_present"] == True
+    assert d["presence_status"] == "present"
+    assert d["presence_confidence"] == 0.9
+    assert d["detector_available"] == True
     assert d["face"]["present"] == True
     assert d["face"]["rough_mood"] == "neutral"
     assert d["motion"]["level"] == "slight"
@@ -87,6 +92,7 @@ def test_video_observation_summary():
     obs = VideoObservation(
         timestamp=time.time(),
         user_present=True,
+        presence_status="present",
         face=FaceDetection(present=True, rough_mood=MoodLabel.FOCUSED),
         motion=MotionDetection(level=MotionLabel.MODERATE),
         object_hint="laptop",
@@ -103,12 +109,14 @@ def test_api_payload():
     obs = VideoObservation(
         timestamp=1234567890.0,
         user_present=True,
+        presence_status="present",
         external_analysis=True,
         external_description="A person looking at camera",
     )
     payload = obs.to_api_payload()
     assert payload["timestamp"] == 1234567890.0
     assert payload["user_present"] == True
+    assert payload["presence_status"] == "present"
     assert payload["external_analysis"] == True
     assert payload["external_description"] == "A person looking at camera"
     assert "face" in payload

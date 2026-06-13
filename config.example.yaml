@@ -32,10 +32,10 @@ local_vision:
   face_confidence: 0.5
   motion_sensitivity: 0.3
 
-# 外部视觉模型 — 默认 OpenAI GPT-4o
+# 外部视觉模型 — 默认关闭，使用 mock
 vision_provider:
   default_on: false
-  provider: openai          # openai | anthropic
+  provider: mock             # mock | openai | anthropic
   model: gpt-4o
   max_frames_per_minute: 6
   max_cost_per_hour: 0.5
@@ -45,21 +45,20 @@ vision_provider:
   api_key_env: "OPENAI_API_KEY"
   api_base: "https://api.openai.com/v1"
 
-# 语音 — 默认 OpenAI Whisper + OpenAI TTS
+# 语音 — 默认 mock，有 API key 时可用 openai_whisper / openai_tts
 speech:
   asr:
-    provider: openai_whisper
+    provider: openai_whisper    # 需要 OPENAI_API_KEY
     model: whisper-1
     language: zh
   tts:
-    provider: openai_tts      # openai_tts | elevenlabs
+    provider: openai_tts        # 需要 OPENAI_API_KEY
     model: tts-1
     voice: alloy
     speed: 1.0
     streaming: true
     interruptible: true
   api_key_env: "OPENAI_API_KEY"
-  elevenlabs_api_key_env: "ELEVENLABS_API_KEY"
 
 # 主项目 Mnemosyne 桥接
 mnemosyne:
