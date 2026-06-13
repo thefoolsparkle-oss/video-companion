@@ -102,6 +102,9 @@ def main():
     from tests import test_mnemosyne_client
     from tests import test_rest_api
     from tests import test_video_turn_contract
+    from tests import test_avatar_state
+    from tests import test_api_contract
+    from tests import test_integration_standalone
 
     runner = TestRunner()
 
@@ -115,6 +118,9 @@ def main():
     runner.run_module("test_mnemosyne_client", test_mnemosyne_client)
     runner.run_module("test_rest_api", test_rest_api)
     runner.run_module("test_video_turn_contract", test_video_turn_contract)
+    runner.run_module("test_avatar_state", test_avatar_state)
+    runner.run_module("test_api_contract", test_api_contract)
+    runner.run_module("test_integration_standalone", test_integration_standalone)
 
     ok = runner.summary()
     return 0 if ok else 1

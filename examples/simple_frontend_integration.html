@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI VTuber — WebSocket Integration Demo</title>
+<style>
+  body { font-family: monospace; background: #111; color: #eee; margin: 0; padding: 20px; }
+  h2 { color: #6cf; margin-top: 24px; }
+  .box { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 16px; margin: 8px 0; }
+  .row { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+  label { color: #888; min-width: 120px; }
+  .value { color: #6cf; font-weight: bold; }
+  #log { max-height: 300px; overflow-y: auto; }
+  .entry { padding: 4px 0; border-bottom: 1px solid #222; }
+  .entry .type { color: #f90; }
+  .entry .text { color: #ccc; }
+  .entry .meta { color: #666; font-size: 12px; }
+  button { background: #336; color: #fff; border: 1px solid #558; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 4px; }
+  button:hover { background: #448; }
+  button:disabled { opacity: 0.4; }
+  input[type=text] { background: #222; color: #eee; border: 1px solid #444; padding: 8px 12px; border-radius: 4px; flex: 1; }
+  #connection { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+  #connection.connected { background: #0f0; }
+  #connection.disconnected { background: #f00; }
+</style>
+</head>
+<body>
+
+<h1>AI VTuber Integration Demo</h1>
+<p>此页面演示主项目如何接收 video-companion 的 WebSocket 事件。</p>
+
+<!-- Connection -->
+<div class="box">
+  <span id="connection" class="disconnected"></span>
+  <strong>Connection:</strong> <span id="conn-status">Disconnected</span>
+  <button id="btn-session" onclick="startSession()">Start Session</button>
+  <button id="btn-stop" onclick="stopSession()" disabled>Stop Session</button>
+</div>
+
+<!-- Avatar State -->
+<div class="box">
+  <h2>avatar_state</h2>
+  <div class="row"><label>expression:</label> <span class="value" id="av-expression">-</span></div>
+  <div class="row"><label>speaking:</label> <span class="value" id="av-speaking">-</span></div>
+  <div class="row"><label>mouth_open:</label> <span class="value" id="av-mouth">-</span></div>
+  <div class="row"><label>looking_at_user:</label> <span class="value" id="av-looking">-</span></div>
+  <div class="row"><label>attention:</label> <span class="value" id="av-attention">-</span></div>
+  <div class="row"><label>emotion:</label> <span class="value" id="av-emotion">-</span></div>
+</div>
+
+<!-- Latest Response -->
+<div class="box">
+  <h2>ai_response</h2>
+  <div class="row"><label>text:</label> <span class="value" id="ar-text">-</span></div>
+  <div class="row"><label>reply_source:</label> <span class="value" id="ar-source">-</span></div>
+  <div class="row"><label>latency:</label> <span class="value" id="ar-latency">-</span></div>
+  <div class="row"><label>audio:</label> <span class="value" id="ar-audio">-</span></div>
+</div>
+
+<!-- Text Input -->
+<div class="box">
+  <div class="row">
+    <input type="text" id="text-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendText()">
+    <button id="btn-send" onclick="sendText()" disabled>Send</button>
+  </div>
+</div>
+
+<!-- Event Log -->
+<div class="box">
+  <h2>Event Log</h2>
+  <div id="log"></div>
+</div>
+
+<script>
+  let ws = null;
+  let sessionActive = false;
+
+  function log(type, text, meta = '') {
+    const el = document.getElementById('log');
+    const entry = document.createElement('div');
+    entry.className = 'entry';
+    entry.innerHTML = `<span class="type">[${type}]</span> <span class="text">${text}</span> <span class="meta">${meta}</span>`;
+    el.prepend(entry);
+    while (el.children.length > 50) el.removeChild(el.lastChild);
+  }
+
+  function setConnStatus(ok) {
+    document.getElementById('connection').className = ok ? 'connected' : 'disconnected';
+    document.getElementById('conn-status').textContent = ok ? 'Connected' : 'Disconnected';
+  }
+
+  async function startSession() {
+    try {
+      // REST: start session
+      const r = await fetch('/api/session/start?persona_id=default', { method: 'POST' });
+      const data = await r.json();
+      if (data.status !== 'started') throw new Error('Failed to start session');
+      sessionActive = true;
+      document.getElementById('btn-session').disabled = true;
+      document.getElementById('btn-stop').disabled = false;
+      document.getElementById('btn-send').disabled = false;
+      log('system', 'Session started');
+
+      // WebSocket: connect
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws`);
+      ws.onopen = () => setConnStatus(true);
+      ws.onclose = () => { setConnStatus(false); setTimeout(() => { if (sessionActive) location.reload(); }, 3000); };
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        switch (msg.type) {
+          case 'ai_response':
+            document.getElementById('ar-text').textContent = msg.text;
+            document.getElementById('ar-source').textContent = msg.reply_source;
+            document.getElementById('ar-latency').textContent = msg.total_latency_ms + 'ms';
+            document.getElementById('ar-audio').textContent = msg.audio_base64 ? 'available (' + msg.audio_format + ')' : 'empty';
+            // avatar_state
+            const av = msg.avatar_state;
+            document.getElementById('av-expression').textContent = av.expression;
+            document.getElementById('av-speaking').textContent = av.speaking;
+            document.getElementById('av-mouth').textContent = av.mouth_open;
+            document.getElementById('av-looking').textContent = av.looking_at_user;
+            document.getElementById('av-attention').textContent = av.attention;
+            document.getElementById('av-emotion').textContent = av.emotion;
+            log('ai_response', msg.text, `turn#${msg.turn_id} source=${msg.reply_source}`);
+            break;
+          case 'transcript':
+            log('transcript', `${msg.speaker}: ${msg.text}`, `turn#${msg.turn_id}`);
+            break;
+          case 'observation':
+            log('observation', `presence=${msg.data.presence_status}`, `face=${msg.data.face.present}`);
+            break;
+          case 'system_error':
+            log('error', `[${msg.code}] ${msg.message}`);
+            break;
+          case 'status':
+            log('status', `session=${msg.data.session_state}`);
+            break;
+        }
+      };
+    } catch (e) {
+      log('error', 'Start failed: ' + e.message);
+    }
+  }
+
+  function sendText() {
+    const input = document.getElementById('text-input');
+    const text = input.value.trim();
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+    input.value = '';
+    ws.send(JSON.stringify({ type: 'text_input', text }));
+    log('user', text);
+  }
+
+  async function stopSession() {
+    try {
+      const r = await fetch('/api/session/stop', { method: 'POST' });
+      const data = await r.json();
+      const s = data.summary;
+      log('system', `Session stopped (${s.duration_sec.toFixed(0)}s, ${s.total_turns} turns)`);
+      log('summary', s.summary_text);
+      sessionActive = false;
+      document.getElementById('btn-session').disabled = false;
+      document.getElementById('btn-stop').disabled = true;
+      document.getElementById('btn-send').disabled = true;
+      if (ws) ws.close();
+      setConnStatus(false);
+    } catch (e) {
+      log('error', 'Stop failed: ' + e.message);
+    }
+  }
+</script>
+
+</body>
+</html>
