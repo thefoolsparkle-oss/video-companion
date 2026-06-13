@@ -10,29 +10,20 @@
 
 <!-- Top Status Bar -->
 <header id="topbar">
-  <div class="status-group">
-    <span class="dot" id="dot-vc"></span>
-    <span id="label-vc">video-companion</span>
-  </div>
-  <div class="status-group">
-    <span class="dot" id="dot-ws"></span>
-    <span id="label-ws">WebSocket</span>
-  </div>
-  <div class="status-group">
-    <span id="label-session">无会话</span>
-  </div>
-  <div class="status-group">
-    <span id="label-timer">00:00</span>
-    &nbsp;|&nbsp;
-    Turns: <span id="label-turns">0</span>
-  </div>
+  <span class="status-item"><span class="dot" id="dot-vc"></span> video-companion</span>
+  <span class="status-item"><span class="dot" id="dot-ws"></span> WebSocket</span>
+  <span class="status-item" id="label-session">无会话</span>
+  <span class="status-item" id="label-timer">00:00</span>
+  <span class="status-item">Turns: <b id="label-turns">0</b></span>
+  <span class="mock-badge" id="mock-asr">ASR: mock</span>
+  <span class="mock-badge" id="mock-tts">TTS: mock</span>
+  <span class="mock-badge" id="mock-vision">Vision: mock</span>
 </header>
 
 <!-- Main Layout -->
 <main id="main-layout">
-
-  <!-- Left: Avatar -->
-  <section id="avatar-panel">
+  <!-- Left: Avatar + Hardware -->
+  <section id="left-panel">
     <div class="avatar-card" id="avatar-card">
       <div class="avatar-face" id="avatar-face">澪</div>
       <div class="avatar-name">澪 (Mio)</div>
@@ -41,7 +32,49 @@
         <div class="info-row"><b>表情</b> <span id="av-expression">idle</span></div>
         <div class="info-row"><b>说话</b> <span id="av-speaking">-</span></div>
         <div class="info-row"><b>注视</b> <span id="av-looking">-</span></div>
-        <div class="info-row"><b>检测</b> <span class="presence-tag unknown" id="av-presence">unknown</span></div>
+      </div>
+    </div>
+
+    <div class="hw-section">
+      <h3 class="hw-title">硬件验收</h3>
+
+      <!-- Camera -->
+      <div class="hw-block">
+        <div class="hw-header">
+          <span class="dot" id="dot-cam"></span>
+          <strong>摄像头</strong>
+          <button id="btn-cam-toggle" onclick="App.toggleCamera()">开启</button>
+        </div>
+        <video id="cam-preview" autoplay playsinline muted></video>
+        <canvas id="cam-canvas" style="display:none"></canvas>
+        <div class="hw-meta">
+          <span>发送帧: <b id="cam-frames">0</b></span>
+          <span>检测: <span class="presence-tag unknown" id="hw-presence">-</span></span>
+        </div>
+        <div id="cam-error" class="hw-error" style="display:none"></div>
+      </div>
+
+      <!-- Mic -->
+      <div class="hw-block">
+        <div class="hw-header">
+          <span class="dot" id="dot-mic"></span>
+          <strong>麦克风</strong>
+          <button id="btn-mic-toggle" onclick="App.toggleMic()">开启</button>
+        </div>
+        <div class="meter-bar">
+          <div class="meter-fill" id="mic-meter" style="width:0%"></div>
+        </div>
+        <div class="hw-meta">
+          <span>发送段: <b id="mic-segments">0</b></span>
+          <span class="mock-badge" style="font-size:10px">ASR mock — 不代表真实识别</span>
+        </div>
+        <div id="mic-error" class="hw-error" style="display:none"></div>
+      </div>
+
+      <!-- Observation -->
+      <div class="hw-block">
+        <div class="hw-header"><strong>最近 observation</strong></div>
+        <pre id="obs-raw" class="obs-raw">等待帧数据...</pre>
       </div>
     </div>
   </section>
@@ -63,7 +96,6 @@
       <p class="summary-meta">时长: <span id="summary-dur"></span> | 轮次: <span id="summary-turns"></span></p>
     </div>
   </section>
-
 </main>
 
 <script src="app.js"></script>
