@@ -605,30 +605,32 @@ def create_app(server: VideoCompanionServer) -> FastAPI:
 
     @app.post("/api/consent/{item}/grant")
     async def grant_consent(item: str):
-        mapping = {
-            "camera": (server.consent.grant_camera, lambda: server.camera.start()),
-            "microphone": (server.consent.grant_microphone, lambda: server.audio.start_listening()),
-            "external_vision": (server.consent.grant_external_vision, lambda: setattr(server.vision, 'enabled', True)),
-        }
-        if item not in mapping:
+        if item == "camera":
+            server.consent.grant_camera(reason="rest_api")
+            await server.camera.start()
+        elif item == "microphone":
+            server.consent.grant_microphone(reason="rest_api")
+            await server.audio.start_listening()
+        elif item == "external_vision":
+            server.consent.grant_external_vision(reason="rest_api")
+            server.vision.set_enabled(True)
+        else:
             return JSONResponse({"error": f"Unknown consent item: {item}"}, status_code=400)
-        grant_fn, hw_fn = mapping[item]
-        grant_fn(reason="rest_api")
-        await hw_fn()
         return {"status": "granted", "item": item}
 
     @app.post("/api/consent/{item}/revoke")
     async def revoke_consent(item: str):
-        mapping = {
-            "camera": (server.consent.revoke_camera, lambda: server.camera.stop()),
-            "microphone": (server.consent.revoke_microphone, lambda: server.audio.stop_listening()),
-            "external_vision": (server.consent.revoke_external_vision, lambda: server.vision.set_enabled(False)),
-        }
-        if item not in mapping:
+        if item == "camera":
+            server.consent.revoke_camera(reason="rest_api")
+            await server.camera.stop()
+        elif item == "microphone":
+            server.consent.revoke_microphone(reason="rest_api")
+            await server.audio.stop_listening()
+        elif item == "external_vision":
+            server.consent.revoke_external_vision(reason="rest_api")
+            server.vision.set_enabled(False)
+        else:
             return JSONResponse({"error": f"Unknown consent item: {item}"}, status_code=400)
-        revoke_fn, hw_fn = mapping[item]
-        revoke_fn(reason="rest_api")
-        await hw_fn()
         return {"status": "revoked", "item": item}
 
     @app.post("/api/consent/revoke-all")
