@@ -146,7 +146,7 @@ class MnemosyneClient:
             logger.warning("No HTTP client available (install httpx or aiohttp)")
 
         # 测试连接
-        self._connected = await self.health_check()
+        self._connected = await self._try_connect()
         if self._connected:
             logger.info("Mnemosyne bridge: CONNECTED")
         else:
@@ -210,13 +210,55 @@ class MnemosyneClient:
                     return await resp.json()
                 return None
 
-    async def health_check(self) -> bool:
-        """检查主项目连接"""
+    async def _try_connect(self) -> bool:
+        """尝试建立连接 — 不依赖 GET / 返回 JSON"""
+        if not self.config.enabled:
+            return False
         try:
-            result = await self._request("GET", "/")
-            return result is not None
+            if HAS_HTTPX and self._http_client:
+                resp = await self._http_client.get("/api/health", timeout=5)
+                return resp.status_code < 500
+            elif HAS_AIOHTTP:
+                return await self._aiohttp_health_check()
+        except Exception:
+            pass
+        return False
+
+    async def _aiohttp_health_check(self) -> bool:
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.config.api_base}/api/health",
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    return resp.status < 500
         except Exception:
             return False
+
+    async def health_check(self) -> bool:
+        """检查主项目连接 — 使用专用 health 端点"""
+        return await self._try_connect()
+
+    async def reconnect(self) -> bool:
+        """尝试重新连接主项目"""
+        if self._connected:
+            return True
+        logger.info("Mnemosyne bridge: attempting reconnect...")
+        if HAS_HTTPX and not self._http_client:
+            try:
+                self._http_client = httpx.AsyncClient(
+                    base_url=self.config.api_base,
+                    timeout=self.config.timeout,
+                    headers=self._build_headers(),
+                )
+            except Exception as e:
+                logger.warning("Failed to create HTTP client: %s", e)
+                return False
+        self._connected = await self._try_connect()
+        if self._connected:
+            logger.info("Mnemosyne bridge: RECONNECTED")
+        return self._connected
 
     async def get_session_context(self, persona_id: str) -> Optional[SessionContext]:
         """获取视频会话启动上下文

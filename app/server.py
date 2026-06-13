@@ -48,12 +48,12 @@ logger = logging.getLogger("video-companion")
 
 # 默认配置
 DEFAULT_CONFIG = {
-    "server": {"host": "127.0.0.1", "port": 8001, "cors_origins": ["*"]},
+    "server": {"host": "127.0.0.1", "port": 8001, "cors_origins": ["http://localhost:8001"]},
     "camera": {"width": 640, "height": 480, "fps": 15, "capture_interval_sec": 2.0, "default_on": False},
     "microphone": {"sample_rate": 16000, "chunk_size": 1024, "default_on": False},
     "local_vision": {"detection_interval_sec": 1.0, "enabled_detectors": ["face", "motion"], "face_confidence": 0.5, "motion_sensitivity": 0.3},
     "vision_provider": {"provider": "mock", "model": "gpt-4o", "max_frames_per_minute": 6, "max_cost_per_hour": 0.5, "max_cost_per_day": 2.0, "max_resolution": 1024, "fallback_on_limit": "skip", "api_key_env": "OPENAI_API_KEY", "api_base": "https://api.openai.com/v1", "default_on": False},
-    "speech": {"asr": {"provider": "openai_whisper", "model": "whisper-1", "language": "zh"}, "tts": {"provider": "openai_tts", "model": "tts-1", "voice": "alloy", "speed": 1.0, "streaming": True, "interruptible": True}, "api_key_env": "OPENAI_API_KEY"},
+    "speech": {"asr": {"provider": "mock", "model": "whisper-1", "language": "zh"}, "tts": {"provider": "mock", "model": "tts-1", "voice": "alloy", "speed": 1.0, "streaming": True, "interruptible": True}, "api_key_env": "OPENAI_API_KEY"},
     "mnemosyne": {"api_base": "http://127.0.0.1:8000", "api_key_env": "MNEMOSYNE_API_KEY", "timeout": 10, "retries": 2, "enabled": True},
     "privacy": {"defaults": {"camera": False, "microphone": False, "external_vision": False, "save_summary": False, "save_observation": False}, "save_raw_media": False, "log_redact_pii": True},
     "cost": {"max_frames_per_minute": 6, "max_cost_per_hour": 0.5, "max_cost_per_day": 2.0, "on_limit": "skip"},
@@ -143,6 +143,7 @@ class VideoCompanionServer:
 
         self._active_ws: Set[WebSocket] = set()
         self._server_start_time: float = time.time()
+        self._reconnect_task: Optional[asyncio.Task] = None
 
     def _load_config(self, config_path: str) -> dict:
         if not os.path.exists(config_path):
@@ -163,8 +164,20 @@ class VideoCompanionServer:
         await self.vision.initialize()
         await self.speech.initialize()
         await self.mnemosyne.initialize()
+        # 启动主项目重连轮询
+        self._reconnect_task = asyncio.create_task(self._mnemosyne_reconnect_loop())
         logger.info("All modules initialized")
         logger.info("=" * 50)
+
+    async def _mnemosyne_reconnect_loop(self):
+        """后台轮询主项目重连，每 30 秒尝试一次"""
+        while True:
+            await asyncio.sleep(30)
+            if not self.mnemosyne.is_connected():
+                try:
+                    await self.mnemosyne.reconnect()
+                except Exception:
+                    pass
 
     async def start_session(self, persona_id: str = "default") -> MediaSession:
         if self.media_session and self.media_session.is_active():
@@ -441,7 +454,7 @@ class VideoCompanionServer:
         if self.media_session:
             self.media_session.interrupt()
         self.speech.interrupt()
-        self.audio.interrupt()
+        await self.audio.interrupt()
         await ws.send_json({"type": "interrupted"})
         # 广播给所有连接
         for w in self._active_ws:
@@ -593,33 +606,29 @@ def create_app(server: VideoCompanionServer) -> FastAPI:
     @app.post("/api/consent/{item}/grant")
     async def grant_consent(item: str):
         mapping = {
-            "camera": (server.consent.grant_camera, lambda: None),
-            "microphone": (server.consent.grant_microphone, lambda: None),
-            "external_vision": (server.consent.grant_external_vision, lambda: None),
+            "camera": (server.consent.grant_camera, lambda: server.camera.start()),
+            "microphone": (server.consent.grant_microphone, lambda: server.audio.start_listening()),
+            "external_vision": (server.consent.grant_external_vision, lambda: setattr(server.vision, 'enabled', True)),
         }
         if item not in mapping:
             return JSONResponse({"error": f"Unknown consent item: {item}"}, status_code=400)
-        grant_fn, _ = mapping[item]
+        grant_fn, hw_fn = mapping[item]
         grant_fn(reason="rest_api")
+        await hw_fn()
         return {"status": "granted", "item": item}
 
     @app.post("/api/consent/{item}/revoke")
     async def revoke_consent(item: str):
         mapping = {
-            "camera": (lambda: None, server.consent.revoke_camera),
-            "microphone": (lambda: None, server.consent.revoke_microphone),
-            "external_vision": (lambda: None, server.consent.revoke_external_vision),
+            "camera": (server.consent.revoke_camera, lambda: server.camera.stop()),
+            "microphone": (server.consent.revoke_microphone, lambda: server.audio.stop_listening()),
+            "external_vision": (server.consent.revoke_external_vision, lambda: server.vision.set_enabled(False)),
         }
         if item not in mapping:
             return JSONResponse({"error": f"Unknown consent item: {item}"}, status_code=400)
-        _, revoke_fn = mapping[item]
+        revoke_fn, hw_fn = mapping[item]
         revoke_fn(reason="rest_api")
-        if item == "camera":
-            await server.camera.stop()
-        if item == "microphone":
-            await server.audio.stop_listening()
-        if item == "external_vision":
-            server.vision.set_enabled(False)
+        await hw_fn()
         return {"status": "revoked", "item": item}
 
     @app.post("/api/consent/revoke-all")
@@ -743,6 +752,8 @@ def create_app(server: VideoCompanionServer) -> FastAPI:
     @app.on_event("shutdown")
     async def on_shutdown():
         logger.info("Server shutting down...")
+        if server._reconnect_task:
+            server._reconnect_task.cancel()
         if server.media_session and server.media_session.is_active():
             await server.media_session.stop()
         await server.mnemosyne.close()
