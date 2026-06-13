@@ -14,7 +14,7 @@ video-companion 是 AI VTuber 主项目的实时感知与互动核心模块。
 - 本地视觉观察 (OpenCV 人脸/动作检测)
 - 外部视觉模型调用 (需授权，默认关闭)
 - ASR 语音识别 (mock / openai_whisper)
-- TTS 语音合成 (mock / openai_tts / edge_tts)
+- TTS 语音合成 (mock / openai_tts / elevenlabs)
 - 本地角色对话 (LocalVTuberEngine)
 - avatar_state 输出 (供 Live2D / 虚拟形象层使用)
 - 会话状态管理 + 摘要
@@ -182,7 +182,7 @@ speech:
 ```yaml
 speech:
   tts:
-    provider: openai_tts      # or edge_tts
+    provider: openai_tts      # or elevenlabs
 ```
 
 ### 外部视觉模型

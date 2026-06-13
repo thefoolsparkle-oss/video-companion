@@ -51,14 +51,14 @@ vision_provider:
   api_key_env: "OPENAI_API_KEY"
   api_base: "https://api.openai.com/v1"
 
-# 语音 — 默认 mock。有 API key 时可改为 openai_whisper / openai_tts
+# 语音 — 默认 mock。有 API key 时可改为 openai_whisper / openai_tts / elevenlabs
 speech:
   asr:
     provider: mock              # mock | openai_whisper
     model: whisper-1
     language: zh
   tts:
-    provider: mock              # mock | openai_tts
+    provider: mock              # mock | openai_tts | elevenlabs
     model: tts-1
     voice: alloy
     speed: 1.0
