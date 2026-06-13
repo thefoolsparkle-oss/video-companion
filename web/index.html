@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI VTuber</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Top Status Bar -->
+<header id="topbar">
+  <div class="status-group">
+    <span class="dot" id="dot-vc"></span>
+    <span id="label-vc">video-companion</span>
+  </div>
+  <div class="status-group">
+    <span class="dot" id="dot-ws"></span>
+    <span id="label-ws">WebSocket</span>
+  </div>
+  <div class="status-group">
+    <span id="label-session">无会话</span>
+  </div>
+  <div class="status-group">
+    <span id="label-timer">00:00</span>
+    &nbsp;|&nbsp;
+    Turns: <span id="label-turns">0</span>
+  </div>
+</header>
+
+<!-- Main Layout -->
+<main id="main-layout">
+
+  <!-- Left: Avatar -->
+  <section id="avatar-panel">
+    <div class="avatar-card" id="avatar-card">
+      <div class="avatar-face" id="avatar-face">澪</div>
+      <div class="avatar-name">澪 (Mio)</div>
+      <div class="mouth-bar" id="mouth-bar"></div>
+      <div class="avatar-info">
+        <div class="info-row"><b>表情</b> <span id="av-expression">idle</span></div>
+        <div class="info-row"><b>说话</b> <span id="av-speaking">-</span></div>
+        <div class="info-row"><b>注视</b> <span id="av-looking">-</span></div>
+        <div class="info-row"><b>检测</b> <span class="presence-tag unknown" id="av-presence">unknown</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Right: Chat -->
+  <section id="chat-panel">
+    <div class="chat-messages" id="messages">
+      <p class="placeholder-msg">点击"开始会话"连接 AI VTuber</p>
+    </div>
+    <div class="chat-input-bar">
+      <input type="text" id="text-input" placeholder="输入消息..." disabled>
+      <button id="btn-send" onclick="App.sendText()" disabled>发送</button>
+      <button id="btn-session" class="primary" onclick="App.startSession()">开始会话</button>
+      <button id="btn-stop" class="danger" onclick="App.stopSession()" disabled>停止</button>
+    </div>
+    <div class="summary-bar" id="summary-bar">
+      <strong>会话摘要</strong>
+      <p id="summary-text"></p>
+      <p class="summary-meta">时长: <span id="summary-dur"></span> | 轮次: <span id="summary-turns"></span></p>
+    </div>
+  </section>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
